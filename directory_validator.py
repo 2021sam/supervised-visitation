@@ -1,0 +1,154 @@
+"""Validate official court PDF directories and persist extracted providers."""
+
+import argparse
+import os
+import sqlite3
+import sys
+from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
+
+ROOT = Path(__file__).resolve().parent
+DB_PATH = ROOT / "registry.db"
+
+from readers.pdf_reader import extract as extract_pdf
+
+
+def validate(result_id):
+    con = sqlite3.connect(DB_PATH, timeout=30)
+    con.execute("PRAGMA foreign_keys=ON")
+
+    try:
+        row = con.execute("""
+            SELECT r.court_id, c.county, c.court_url,
+                   r.title, r.url
+            FROM search_results r
+            JOIN courts c ON c.court_id = r.court_id
+            WHERE r.result_id = ?
+        """, (result_id,)).fetchone()
+
+        if row is None:
+            raise ValueError(f"Unknown result_id: {result_id}")
+
+        court_id, county, court_url, title, url = row
+
+        source_host = urlparse(url).hostname
+        court_host = urlparse(court_url).hostname
+
+        if (
+            not source_host
+            or not court_host
+            or source_host != court_host
+        ):
+            raise ValueError(
+                "PDF must be hosted on the court's official domain"
+            )
+
+        print(f"Court: {county} ({court_id})")
+        print(f"Result: {result_id}")
+        print(f"PDF: {url}")
+
+        response = httpx.get(
+            url,
+            timeout=60,
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+
+        content = response.content
+
+        if not content.startswith(b"%PDF-"):
+            raise ValueError("Downloaded content is not a PDF")
+
+        records = extract_pdf(
+            content,
+            source_url=url,
+        )
+
+        print(f"Providers extracted: {len(records)}")
+
+        if not records:
+            raise ValueError(
+                "No providers extracted; directory not validated"
+            )
+
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS supervisors (
+                supervisor_id INTEGER PRIMARY KEY,
+                court_id INTEGER NOT NULL
+                    REFERENCES courts(court_id),
+                result_id INTEGER NOT NULL
+                    REFERENCES search_results(result_id),
+                name TEXT NOT NULL,
+                phone TEXT NOT NULL DEFAULT '',
+                email TEXT NOT NULL DEFAULT '',
+                website TEXT NOT NULL DEFAULT '',
+                raw_text TEXT NOT NULL DEFAULT '',
+                UNIQUE(result_id, name)
+            )
+        """)
+
+        before = con.execute("""
+            SELECT COUNT(*) FROM supervisors
+            WHERE result_id = ?
+        """, (result_id,)).fetchone()[0]
+
+        with con:
+            for record in records:
+                name = str(record.get("name") or "").strip()
+                if not name:
+                    continue
+
+                phones = record.get("phones") or []
+                emails = record.get("emails") or []
+
+                con.execute("""
+                    INSERT OR IGNORE INTO supervisors
+                    (court_id, result_id, name, phone,
+                     email, website, raw_text)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    court_id,
+                    result_id,
+                    name,
+                    record.get("phone") or (
+                        phones[0] if phones else ""
+                    ),
+                    record.get("email") or (
+                        emails[0] if emails else ""
+                    ),
+                    record.get("website") or "",
+                    record.get("raw_text") or "",
+                ))
+
+            after = con.execute("""
+                SELECT COUNT(*) FROM supervisors
+                WHERE result_id = ?
+            """, (result_id,)).fetchone()[0]
+
+            if after == 0:
+                raise ValueError("No providers persisted")
+
+            con.execute("""
+                UPDATE search_results
+                SET validation_status = 'VALIDATED',
+                    rejection_reason = NULL,
+                    validated_at = CURRENT_TIMESTAMP
+                WHERE result_id = ?
+            """, (result_id,))
+
+        print(f"Before: {before}")
+        print(f"Added: {after - before}")
+        print(f"After: {after}")
+        print("Validation: VALIDATED")
+
+    finally:
+        con.close()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--result-id", type=int, required=True)
+    args = parser.parse_args()
+    validate(args.result_id)
