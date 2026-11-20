@@ -130,6 +130,8 @@ def main():
 
     text_path.write_text(report, encoding="utf-8")
     create_chart(counts, chart_path)
+    import subprocess
+    subprocess.run(["open", str(chart_path)], check=True)
 
     print(report)
     print(f"Text report: {text_path}")
