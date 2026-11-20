@@ -15,6 +15,8 @@ Strategies:
 No default page-count, depth, or overall search-time limits.
 """
 
+import sys
+
 import argparse
 import asyncio
 import heapq
@@ -210,6 +212,7 @@ async def async_search(
     max_depth=None,
     dynamic=False,
     ranking="keyword",
+    extract_documents=False,
 ):
     """
     Crawl from a starting URL and return structured results.
@@ -223,6 +226,7 @@ async def async_search(
         max_depth: Optional explicit depth limit
         dynamic: Enable JavaScript rendering/waiting
         ranking: keyword or hybrid
+        extract_documents: Extract discovered documents when True
 
     Returns:
         dict containing pages visited, candidates,
@@ -575,6 +579,65 @@ async def async_search(
         ),
     )
 
+    if extract_documents:
+        from readers.document_reader import read_document
+
+        document_candidates = [
+            candidate for candidate in ranked
+            if candidate["document"]
+        ]
+
+        total_documents = len(document_candidates)
+
+        for index, candidate in enumerate(document_candidates, 1):
+            print(
+                f"[EXTRACT {index}/{total_documents}] START "
+                f"{candidate['url']}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+            try:
+                document = await asyncio.to_thread(
+                    read_document,
+                    candidate["url"],
+                )
+
+                print(
+                    f"[EXTRACT {index}/{total_documents}] SUCCESS "
+                    f"{document.format} "
+                    f"{len(document.text):,} characters",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+                candidate["extraction"] = {
+                    "status": "success",
+                    "format": document.format,
+                    "url": document.url,
+                    "content_type": document.content_type,
+                    "text": document.text,
+                }
+
+            except Exception as exc:
+                print(
+                    f"[EXTRACT {index}/{total_documents}] ERROR "
+                    f"{candidate['url']}: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+                candidate["extraction"] = {
+                    "status": "error",
+                    "error": str(exc),
+                }
+
+                errors.append({
+                    "url": candidate["url"],
+                    "stage": "document_extraction",
+                    "error": str(exc),
+                })
+
     return {
         "start_url": start_url,
         "query": query,
@@ -646,6 +709,12 @@ def main():
     )
 
     parser.add_argument(
+        "--extract-documents",
+        action="store_true",
+        help="Download and extract discovered documents",
+    )
+
+    parser.add_argument(
         "--json",
         action="store_true",
     )
@@ -661,6 +730,7 @@ def main():
         max_depth=args.max_depth,
         dynamic=args.dynamic,
         ranking=args.ranking,
+        extract_documents=args.extract_documents,
     )
 
     if args.json:
