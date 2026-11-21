@@ -1,3 +1,4 @@
+from .two_column_providers import extract_two_column_providers
 """Extract PDF provider candidates exclusively through Docling."""
 
 from .docling_adapter import pdf_to_markdown
@@ -8,6 +9,7 @@ from .heading_providers import extract_heading_providers
 
 
 EXTRACTORS = (
+    extract_two_column_providers,
     extract_providers,
     extract_column_table_providers,
     extract_label_value_providers,

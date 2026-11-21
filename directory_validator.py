@@ -18,6 +18,10 @@ from readers.pdf_reader import (
     extract_text as extract_pdf_text,
 )
 
+from acquisition.extraction.directory_sections import (
+    has_provider_directory_heading,
+)
+
 
 
 def identify_directory_county(content, connection):
@@ -110,6 +114,14 @@ def validate(result_id):
 
         court_id = actual_court_id
         county = actual_county
+
+        markdown = extract_pdf_text(content)
+
+        if not has_provider_directory_heading(markdown):
+            raise ValueError(
+                "Document is not a recognized supervised-visitation "
+                "provider directory"
+            )
 
         records = extract_pdf(
             content,
