@@ -232,7 +232,7 @@ def validate(result_id):
             # persisted provider qualifies the county as FOUND.
             con.execute("""
                 UPDATE courts
-                SET classification = 'FOUND'
+                SET FOUND = 1
                 WHERE court_id = ?
                   AND EXISTS (
                       SELECT 1

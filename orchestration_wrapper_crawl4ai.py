@@ -81,26 +81,20 @@ def validate_candidates(connection, court_id, candidates):
         if not urlparse(candidate["url"]).path.lower().endswith(".pdf"):
             continue
 
-        if candidate["validation_status"] in (
-            "REJECTED",
-            "VALIDATED",
-        ):
+        if candidate["validation_status"] in ("REJECTED", "VALIDATED"):
             continue
 
         result_id = candidate["result_id"]
-
-        print(f"\n[VALIDATE] {candidate['url']}", flush=True)
+        print(f"\\n[VALIDATE] {candidate['url']}", flush=True)
 
         try:
             validate(result_id)
-
         except Exception as exc:
             status = (
                 "REJECTED"
                 if isinstance(exc, ValueError)
                 else "EXTRACTION_FAILED"
             )
-
             with connection:
                 connection.execute(
                     """
@@ -112,25 +106,30 @@ def validate_candidates(connection, court_id, candidates):
                     """,
                     (status, str(exc), result_id),
                 )
-
             print(f"[{status}] {exc}", flush=True)
             continue
 
-        classification = connection.execute(
+        count = provider_count(connection, court_id)
+        validated = connection.execute(
             """
-            SELECT classification FROM courts
-            WHERE court_id = ?
+            SELECT EXISTS (
+                SELECT 1
+                FROM search_results
+                WHERE result_id = ?
+                  AND court_id = ?
+                  AND validation_status = 'VALIDATED'
+            )
             """,
-            (court_id,),
+            (result_id, court_id),
         ).fetchone()[0]
 
-        count = provider_count(connection, court_id)
-
-        if classification == "FOUND" and count > 0:
-            print(
-                f"\n[EARLY EXIT] {count} providers saved.",
-                flush=True,
-            )
+        if validated and count > 0:
+            with connection:
+                connection.execute(
+                    "UPDATE courts SET FOUND = 1 WHERE court_id = ? AND MIA = 0",
+                    (court_id,),
+                )
+            print(f"\\n[EARLY EXIT] {count} providers saved.", flush=True)
             return True
 
     return False
@@ -140,10 +139,14 @@ def run(args):
     connection = sqlite3.connect(DB_PATH, timeout=30)
     connection.execute("PRAGMA foreign_keys=ON")
 
+    run_id = None
+    pages_visited = 0
+    candidates_found = 0
+
     try:
         row = connection.execute(
             """
-            SELECT county, classification
+            SELECT county, FOUND, MIA
             FROM courts
             WHERE court_id = ?
             """,
@@ -153,23 +156,24 @@ def run(args):
         if row is None:
             raise ValueError(f"Unknown court_id: {args.court_id}")
 
-        county, classification = row
-
+        county, found, mia = row
         print(f"Court: {county} ({args.court_id})")
-        print(f"Classification: {classification}")
+        print(f"FOUND: {found} | MIA: {mia}")
 
-        if classification == "MIA":
-            print("[SKIP] County classified MIA.")
+        if not args.force and (found or mia):
+            print("[SKIP] County already FOUND or manually MIA.")
             return
 
-        if (
-            classification == "FOUND"
-            and provider_count(connection, args.court_id) > 0
-        ):
-            print("[SKIP] County already validated.")
-            return
+        with connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO county_search_runs (court_id)
+                VALUES (?)
+                """,
+                (args.court_id,),
+            )
+            run_id = cursor.lastrowid
 
-        # Stage 1: Discover candidate links.
         results = search(
             url=args.url,
             query=args.query,
@@ -181,37 +185,60 @@ def run(args):
             link_filter=LINK_FILTER,
         )
 
-        print(f"\nPages visited: {results['pages_visited']}")
-        print(f"Candidates: {results['candidate_count']}")
+        pages_visited = results["pages_visited"]
+        candidates_found = results["candidate_count"]
 
-        # Stage 2: Persist discovery evidence.
+        print(f"\\nPages visited: {pages_visited}")
+        print(f"Candidates: {candidates_found}")
+
         candidates = persist_candidates(
-            connection,
-            args.court_id,
-            args.query,
-            results["candidates"],
+            connection, args.court_id, args.query, results["candidates"]
         )
 
-        # Stage 3: Validate ranked PDF candidates.
-        validate_candidates(
-            connection,
-            args.court_id,
-            candidates,
-        )
+        validate_candidates(connection, args.court_id, candidates)
 
-        # Stage 4: Report the persisted outcome.
-        classification = connection.execute(
-            """
-            SELECT classification FROM courts
-            WHERE court_id = ?
-            """,
+        found, mia = connection.execute(
+            "SELECT FOUND, MIA FROM courts WHERE court_id = ?",
             (args.court_id,),
-        ).fetchone()[0]
+        ).fetchone()
 
-        print("\n=== FINAL RESULT ===")
+        outcome = "FOUND" if found else "NOT_FOUND"
+
+        with connection:
+            connection.execute(
+                """
+                UPDATE county_search_runs
+                SET completed_at = CURRENT_TIMESTAMP,
+                    result = ?,
+                    pages_visited = ?,
+                    candidates_found = ?
+                WHERE run_id = ?
+                """,
+                (outcome, pages_visited, candidates_found, run_id),
+            )
+
+        print("\\n=== FINAL RESULT ===")
         print(f"County: {county}")
-        print(f"Classification: {classification}")
+        print(f"FOUND: {found} | MIA: {mia}")
+        print(f"Search result: {outcome}")
         print(f"Providers: {provider_count(connection, args.court_id)}")
+
+    except Exception as exc:
+        if run_id is not None:
+            with connection:
+                connection.execute(
+                    """
+                    UPDATE county_search_runs
+                    SET completed_at = CURRENT_TIMESTAMP,
+                        result = 'ERROR',
+                        pages_visited = ?,
+                        candidates_found = ?,
+                        error_message = ?
+                    WHERE run_id = ?
+                    """,
+                    (pages_visited, candidates_found, str(exc), run_id),
+                )
+        raise
 
     finally:
         connection.close()
@@ -221,11 +248,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Crawl4AI registry orchestration wrapper"
     )
-
     parser.add_argument("--court-id", type=int, required=True)
     parser.add_argument("--url", required=True)
     parser.add_argument("--query", default=QUERY)
     parser.add_argument("--max-depth", type=int)
     parser.add_argument("--max-pages", type=int)
-
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Explicitly search a FOUND or manually MIA county",
+    )
     run(parser.parse_args())

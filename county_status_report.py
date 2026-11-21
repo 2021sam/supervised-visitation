@@ -1,74 +1,100 @@
 #!/usr/bin/env python3
-"""Generate a county classification list and pie chart from registry.db."""
+"""Generate California county search status report and pie chart."""
 
 import argparse
 import sqlite3
+import subprocess
 from collections import Counter
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATABASE = PROJECT_ROOT / "registry.db"
 
 
 def load_counties():
-    """Read county classifications without modifying the database."""
+    """Read county flags and calculate SEARCHED from search history."""
     uri = f"{DATABASE.as_uri()}?mode=ro"
 
     with sqlite3.connect(uri, uri=True) as db:
-        return db.execute(
-            """
-            SELECT county, classification
-            FROM courts
-            ORDER BY county COLLATE NOCASE
-            """
-        ).fetchall()
+        return db.execute("""
+            SELECT
+                c.county,
+                CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM county_search_runs AS r
+                    WHERE r.court_id = c.court_id
+                ) THEN 1 ELSE 0 END AS SEARCHED,
+                c.FOUND,
+                c.MIA
+            FROM courts AS c
+            ORDER BY c.county COLLATE NOCASE
+        """).fetchall()
 
 
 def build_report(counties):
-    """Create a copyable text report."""
-    counts = Counter(
-        classification or "UNCLASSIFIED"
-        for _, classification in counties
-    )
+    """Build text report and exclusive pie-chart counts."""
+    searched_count = sum(row[1] for row in counties)
+    found_count = sum(row[2] for row in counties)
+    mia_count = sum(row[3] for row in counties)
+
+    chart_counts = Counter()
+
+    for county, searched, found, mia in counties:
+        if found:
+            chart_counts["FOUND"] += 1
+        elif mia:
+            chart_counts["MIA"] += 1
+        elif searched:
+            chart_counts["SEARCHED ONLY"] += 1
+        else:
+            chart_counts["NOT YET SEARCHED"] += 1
 
     lines = [
-        "CALIFORNIA SUPERVISED VISITATION",
+        "CALIFORNIA SUPERVISED VISITATION PROVIDERS",
         "COUNTY DIRECTORY STATUS REPORT",
-        "=" * 45,
+        "=" * 62,
         f"Total counties: {len(counties)}",
         "",
-        "CLASSIFICATION SUMMARY",
-        "-" * 45,
-    ]
-
-    for status, count in sorted(counts.items()):
-        lines.append(f"{status}: {count}")
-
-    lines.extend([
+        "STATUS SUMMARY",
+        "-" * 62,
+        f"SEARCHED: {searched_count}",
+        f"FOUND:    {found_count}",
+        f"MIA:      {mia_count}",
         "",
         "COUNTY LIST",
-        "-" * 45,
-    ])
+        "-" * 62,
+        f"{'COUNTY':<26} {'SEARCHED':>9} {'FOUND':>9} {'MIA':>7}",
+        "-" * 62,
+    ]
 
-    for index, (county, classification) in enumerate(counties, 1):
-        status = classification or "UNCLASSIFIED"
-        lines.append(f"{index:02d}. {county:<22} {status}")
+    for county, searched, found, mia in counties:
+        lines.append(
+            f"{county:<26} {searched:>9} {found:>9} {mia:>7}"
+        )
 
-    return "\n".join(lines) + "\n", counts
+    return "\n".join(lines) + "\n", chart_counts
 
 
 def create_chart(counts, output):
-    """Save a pie chart with county counts and a detailed legend."""
+    """Create pie chart without double-counting counties."""
     import matplotlib.pyplot as plt
 
-    labels = sorted(counts)
+    labels = [
+        label for label in (
+            "FOUND",
+            "MIA",
+            "SEARCHED ONLY",
+            "NOT YET SEARCHED",
+        )
+        if counts[label] > 0
+    ]
+
     values = [counts[label] for label in labels]
     total = sum(values)
 
     fig, ax = plt.subplots(figsize=(12, 8))
 
-    wedges, _, autotexts = ax.pie(
+    wedges, _, _ = ax.pie(
         values,
         autopct=lambda pct: f"{pct:.1f}%" if pct >= 3 else "",
         startangle=90,
@@ -85,14 +111,14 @@ def create_chart(counts, output):
     ax.legend(
         wedges,
         legend_labels,
-        title="County Classification",
+        title="County Status",
         loc="center left",
         bbox_to_anchor=(1.0, 0.5),
         fontsize=10,
     )
 
     ax.set_title(
-        f"California Supervised Visitation\\n"
+        f"California Supervised Visitation Providers\n"
         f"County Directory Status — {total} Counties"
     )
 
@@ -102,10 +128,9 @@ def create_chart(counts, output):
     plt.close(fig)
 
 
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate a county list and classification pie chart."
+        description="Generate county search status report and pie chart."
     )
     parser.add_argument(
         "--output-dir",
@@ -130,7 +155,7 @@ def main():
 
     text_path.write_text(report, encoding="utf-8")
     create_chart(counts, chart_path)
-    import subprocess
+
     subprocess.run(["open", str(chart_path)], check=True)
 
     print(report)
