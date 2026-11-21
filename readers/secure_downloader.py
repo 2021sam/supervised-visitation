@@ -11,8 +11,8 @@ ENGINE_ROOT = Path.home() / "apps/data-acquisition-engine"
 if str(ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(ENGINE_ROOT))
 
-from src.acquisition.core import safe_public_url
-from src.acquisition.secure_transport import SecureCourtTransport
+from acquisition.core import safe_public_url
+from acquisition.secure_transport import SecureCourtTransport
 
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 MAX_REDIRECTS = 5

@@ -1,0 +1,364 @@
+"""Bounded, best-first crawler for a trusted, configured website."""
+
+import heapq
+import itertools
+import re
+import time
+from urllib.parse import urlparse
+from urllib.robotparser import RobotFileParser
+
+import httpx
+
+from .core import detect_html_directory, extract_links, rank_links, safe_public_url
+
+USER_AGENT = 'DataAcquisitionEngineLab/0.2 (+research; bounded crawler)'
+
+TARGET = re.compile(
+    r'(supervised[\s_-]*(visitation|exchange)|visitation[\s_-]*monitor|professional[\s_-]*monitor)',
+    re.I,
+)
+
+LIST = re.compile(
+    r'(list|referral|provider|monitor|directory|resource)',
+    re.I,
+)
+
+DOCUMENT = re.compile(
+    r'\.(pdf|csv|xlsx?|docx?)(?:$|\?)',
+    re.I,
+)
+
+
+def is_candidate(link):
+    text = (
+        f"{link.get('text', '')} "
+        f"{link['url'].replace('-', ' ').replace('_', ' ')}"
+    )
+    return bool(TARGET.search(text) and LIST.search(text))
+
+
+def crawl(
+    homepage,
+    *,
+    max_pages=35,
+    max_depth=4,
+    fetch=None,
+    respect_robots=True,
+    stop_on_candidate=False,
+    timeout_seconds=None,
+):
+    """Discover unverified document candidates using best-first crawling.
+
+    stop_on_candidate=True stops after the first page containing a
+    matching document link. It does not verify the document.
+    """
+
+    safe_public_url(homepage)
+
+    host = urlparse(homepage).hostname.lower()
+
+    if not 1 <= max_pages <= 500 or not 0 <= max_depth <= 12:
+        raise ValueError('Invalid crawl budget')
+
+    if timeout_seconds is not None and timeout_seconds <= 0:
+        raise ValueError('timeout_seconds must be positive')
+
+    deadline = (
+        time.monotonic() + timeout_seconds
+        if timeout_seconds is not None
+        else None
+    )
+    timed_out = False
+
+    def remaining_timeout():
+        if deadline is None:
+            return 15.0
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('County crawl deadline exceeded')
+
+        return min(15.0, remaining)
+
+    own_client = None
+
+    if fetch is None:
+        own_client = httpx.Client(
+            timeout=15,
+            follow_redirects=True,
+            headers={'User-Agent': USER_AGENT},
+        )
+
+        def fetch(url):
+            r = own_client.get(
+                url,
+                timeout=remaining_timeout(),
+            )
+            r.raise_for_status()
+
+            if len(r.content) > 5_000_000:
+                raise ValueError('HTML response exceeds 5 MB')
+
+            return (
+                str(r.url),
+                r.headers.get('content-type', ''),
+                r.text,
+            )
+
+    robot = None
+
+    if respect_robots:
+        robot = RobotFileParser()
+        robot.set_url(
+            f'{urlparse(homepage).scheme}://{host}/robots.txt'
+        )
+        try:
+            robots_url = robot.url
+            with httpx.Client(
+                follow_redirects=False,
+                headers={'User-Agent': USER_AGENT},
+            ) as robots_client:
+                response = robots_client.get(
+                    robots_url,
+                    timeout=remaining_timeout(),
+                )
+                response.raise_for_status()
+                robot.parse(response.text.splitlines())
+        except Exception:
+            robot = None
+
+    queue = []
+    seq = itertools.count()
+
+    heapq.heappush(
+        queue,
+        (0, next(seq), homepage, 0, 'Homepage'),
+    )
+
+    queued = {homepage}
+    visited = set()
+    trace = []
+    candidates = {}
+    stopped_early = False
+    links_examined = 0
+    links_until_first_candidate = None
+    successful_html_pages = 0
+    access_errors = 0
+    depth_limited_urls = set()
+
+    try:
+        while queue and len(visited) < max_pages:
+            if deadline is not None and time.monotonic() >= deadline:
+                timed_out = True
+                break
+
+            neg_score, _, url, depth, label = heapq.heappop(
+                queue
+            )
+
+            if url in visited:
+                continue
+
+            visited.add(url)
+
+            event = {
+                'url': url,
+                'depth': depth,
+                'score': -neg_score,
+                'label': label,
+            }
+
+            if robot is not None and not robot.can_fetch(
+                USER_AGENT, url
+            ):
+                event['status'] = 'robots_disallowed'
+                access_errors += 1
+                trace.append(event)
+                continue
+
+            try:
+                effective, content_type, html = fetch(url)
+
+                safe_public_url(effective)
+
+                if urlparse(effective).hostname.lower() != host:
+                    raise ValueError(
+                        'Redirect left configured host'
+                    )
+
+                if 'html' not in content_type.lower():
+                    event['status'] = 'non_html'
+                    trace.append(event)
+                    continue
+
+                links = rank_links(
+                    extract_links(html, effective)
+                )
+
+                # Prioritize continuation links on relevant pages.
+                # This is navigation guidance, not directory verification.
+                from bs4 import BeautifulSoup
+
+                soup = BeautifulSoup(html, "html.parser")
+                headings = " ".join(
+                    tag.get_text(" ", strip=True)
+                    for tag in soup.select("h1, h2, h3")
+                )
+
+                if TARGET.search(headings):
+                    for link in links:
+                        label = link["text"].strip().lower()
+
+                        if label in (
+                            "agree",
+                            "continue",
+                            "view list",
+                            "view directory",
+                        ):
+                            link["score"] += 150
+                            link["reasons"].append(
+                                "relevant_page_continuation"
+                            )
+
+                event.update(
+                    status='ok',
+                    links_found=len(links),
+                )
+
+                successful_html_pages += 1
+                found_candidate = False
+
+                directory = detect_html_directory(html)
+
+                if directory is not None:
+                    candidates[effective] = {
+                        'url': effective,
+                        'text': 'HTML provider directory',
+                        'score': 100,
+                        'found_on': effective,
+                        'verified': False,
+                        'source_type': 'html_directory',
+                        'evidence': directory,
+                    }
+                    found_candidate = True
+
+                for link in links:
+                        links_examined += 1
+                        dest = link['url']
+
+                        if urlparse(dest).hostname.lower() != host:
+                            continue
+
+                        is_document = bool(
+                            DOCUMENT.search(dest)
+                        )
+
+                        resource_document = any(
+                            phrase in (
+                                link.get("text", "") + " " +
+                                dest.replace("-", " ").replace("_", " ")
+                            ).lower()
+                            for phrase in (
+                                "community resources",
+                                "community resource",
+                                "family court services resources",
+                                "family law resources",
+                                "resource directory",
+                                "family services directory",
+                                "referral resources",
+                                "court services resources",
+                            )
+                        )
+
+                        if is_document and (
+                            is_candidate(link) or resource_document
+                        ):
+                            if links_until_first_candidate is None:
+                                links_until_first_candidate = links_examined
+
+                            candidates[dest] = {
+                                'url': dest,
+                                'text': link['text'],
+                                'score': link['score'],
+                                'found_on': effective,
+                                'verified': False,
+                                'source_type': 'document',
+                            }
+                            found_candidate = True
+
+                        if is_document:
+                            continue
+
+                        if depth >= max_depth:
+                            if (
+                                dest not in visited
+                                and dest not in queued
+                            ):
+                                depth_limited_urls.add(dest)
+                            continue
+
+                        if (
+                            dest not in visited
+                            and dest not in queued
+                        ):
+                            heapq.heappush(
+                                queue,
+                                (
+                                    -link['score'],
+                                    next(seq),
+                                    dest,
+                                    depth + 1,
+                                    link['text'],
+                                ),
+                            )
+                            queued.add(dest)
+
+                trace.append(event)
+
+                if stop_on_candidate and found_candidate:
+                    stopped_early = True
+                    break
+
+            except Exception as exc:
+                access_errors += 1
+                event.update(
+                    status='error',
+                    error=f'{type(exc).__name__}: {exc}',
+                )
+                trace.append(event)
+
+        if stopped_early:
+            status = 'candidate_found'
+        elif timed_out:
+            status = 'timeout'
+        elif queue:
+            status = 'budget_exhausted'
+        elif successful_html_pages == 0 and access_errors > 0:
+            status = 'access_failed'
+        elif depth_limited_urls - visited:
+            status = 'depth_limit_reached'
+        elif access_errors > 0:
+            status = 'completed_with_errors'
+        else:
+            status = 'completed'
+
+        return {
+            'status': status,
+            'pages_attempted': len(visited),
+            'queue_remaining': len(queue),
+            'depth_limited_links': len(depth_limited_urls - visited),
+            'successful_html_pages': successful_html_pages,
+            'access_errors': access_errors,
+            'candidate_count': len(candidates),
+            'links_examined': links_examined,
+            'links_until_first_candidate': links_until_first_candidate,
+            'candidates': sorted(
+                candidates.values(),
+                key=lambda x: -x['score'],
+            ),
+            'trace': trace,
+        }
+
+    finally:
+        if own_client:
+            own_client.close()

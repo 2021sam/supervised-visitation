@@ -28,7 +28,7 @@ def extract_text(content: bytes, extension: str) -> str:
 
         code = (
             "import sys; "
-            "from src.acquisition.extraction.word_extractor import extract_word; "
+            "from acquisition.extraction.word_extractor import extract_word; "
             "print(extract_word(sys.argv[1]))"
         )
 

@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -97,11 +98,55 @@ def validate(result_id):
         with con:
             for record in records:
                 name = str(record.get("name") or "").strip()
-                if not name:
-                    continue
-
                 phones = record.get("phones") or []
                 emails = record.get("emails") or []
+
+                phone = str(
+                    record.get("phone") or (phones[0] if phones else "")
+                ).strip()
+                email = str(
+                    record.get("email") or (emails[0] if emails else "")
+                ).strip()
+
+                # Reject document headings and administrative notices.
+                invalid_names = {
+                    "please note",
+                    "professional supervised visitation providers",
+                    "name of authorized provider",
+                    "disclaimer",
+                }
+
+                normalized_name = name.casefold().strip(" :.-")
+
+                is_court_heading = bool(re.search(
+                    r"\b(?:superior court of california|"
+                    r"superior court of the state of california|"
+                    r"california superior court)\b",
+                    normalized_name,
+                ))
+
+                if (
+                    not name
+                    or normalized_name in invalid_names
+                    or is_court_heading
+                ):
+                    continue
+
+                valid_phone = (
+                    len(re.sub(r"\D", "", phone)) in (10, 11)
+                    and (
+                        len(re.sub(r"\D", "", phone)) == 10
+                        or re.sub(r"\D", "", phone).startswith("1")
+                    )
+                )
+
+                valid_email = bool(re.fullmatch(
+                    r"[^\s@]+@[^\s@]+\.[^\s@]+",
+                    email,
+                ))
+
+                if not (valid_phone or valid_email):
+                    continue
 
                 con.execute("""
                     INSERT OR IGNORE INTO supervisors
@@ -112,12 +157,8 @@ def validate(result_id):
                     court_id,
                     result_id,
                     name,
-                    record.get("phone") or (
-                        phones[0] if phones else ""
-                    ),
-                    record.get("email") or (
-                        emails[0] if emails else ""
-                    ),
+                    phone if valid_phone else "",
+                    email if valid_email else "",
                     record.get("website") or "",
                     record.get("raw_text") or "",
                 ))

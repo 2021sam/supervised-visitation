@@ -129,6 +129,29 @@ def run(court_id=None):
                     )
                     added += cursor.rowcount
 
+            # Automatically validate official PDF candidates after saving.
+            from directory_validator import validate
+
+            pdf_results = connection.execute(
+                """
+                SELECT result_id
+                FROM search_results
+                WHERE court_id = ?
+                  AND LOWER(url) LIKE '%.pdf%'
+                  AND COALESCE(validation_status, '') != 'VALIDATED'
+                """,
+                (current_id,),
+            ).fetchall()
+
+            for (result_id,) in pdf_results:
+                try:
+                    validate(result_id)
+                except Exception as exc:
+                    print(
+                        f"Validation skipped for result {result_id}: {exc}",
+                        flush=True,
+                    )
+
             total = connection.execute(
                 """
                 SELECT COUNT(*)
