@@ -13,7 +13,56 @@ import httpx
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "registry.db"
 
-from readers.pdf_reader import extract as extract_pdf
+from readers.pdf_reader import (
+    extract as extract_pdf,
+    extract_text as extract_pdf_text,
+)
+
+
+
+def identify_directory_county(content, connection):
+    """Identify the issuing California Superior Court using Docling."""
+
+    text = extract_pdf_text(content)
+
+    patterns = (
+        r"Superior Court of California[,\s-]+County of\s+",
+        r"Superior Court of the State of California[,\s-]+"
+        r"(?:in and for the )?County of\s+",
+        r"California Superior Court[,\s-]+County of\s+",
+    )
+
+    counties = connection.execute(
+        "SELECT court_id, county FROM courts"
+    ).fetchall()
+
+    matches = set()
+
+    for court_id, county in counties:
+        escaped = re.escape(county)
+
+        for pattern in patterns:
+            if re.search(
+                pattern + escaped + r"\b",
+                text,
+                re.IGNORECASE,
+            ):
+                matches.add((court_id, county))
+
+        if re.search(
+            escaped + r"\s+County Superior Court\b",
+            text,
+            re.IGNORECASE,
+        ):
+            matches.add((court_id, county))
+
+    if len(matches) != 1:
+        raise ValueError(
+            "Cannot uniquely identify issuing county: "
+            + ", ".join(sorted(name for _, name in matches))
+        )
+
+    return next(iter(matches))
 
 
 def validate(result_id):
@@ -49,6 +98,18 @@ def validate(result_id):
 
         if not content.startswith(b"%PDF-"):
             raise ValueError("Downloaded content is not a PDF")
+
+        actual_court_id, actual_county = identify_directory_county(
+            content, con
+        )
+
+        if actual_court_id != court_id:
+            print(
+                f"Cross-county directory: {county} -> {actual_county}"
+            )
+
+        court_id = actual_court_id
+        county = actual_county
 
         records = extract_pdf(
             content,

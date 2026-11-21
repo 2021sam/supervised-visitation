@@ -24,6 +24,11 @@ EXCLUDED_HEADINGS = (
     "monterey county supervised visitation providers",
     "resource list for supervised visitation providers",
     "providers information",
+    "nota:",
+    "tenga en cuenta:",
+    "please note",
+    "important notice",
+    "supervised visitation providers please note",
 )
 
 
@@ -49,6 +54,16 @@ def extract_heading_providers(markdown):
         if not name or any(
             name.lower().startswith(prefix)
             for prefix in EXCLUDED_HEADINGS
+        ):
+            return
+
+        # Document dates are not provider names.
+        if re.fullmatch(
+            r"(?:January|February|March|April|May|June|July|"
+            r"August|September|October|November|December)"
+            r"\s+\d{4}",
+            name,
+            re.IGNORECASE,
         ):
             return
 
