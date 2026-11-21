@@ -5,13 +5,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DOCLING_PYTHON = (
-    PROJECT_ROOT.parent
-    / "data-acquisition-engine"
-    / ".venv-docling"
-    / "bin"
-    / "python"
-)
+DOCLING_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 
 def pdf_to_markdown(content: bytes) -> str:

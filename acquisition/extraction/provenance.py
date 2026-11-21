@@ -10,7 +10,7 @@ from importlib.metadata import (
 def extractor_version() -> str:
     """Return the installed engine package version."""
     try:
-        return version("data-acquisition-engine")
+        return version("supervised-visitation")
     except PackageNotFoundError:
         return "unknown"
 

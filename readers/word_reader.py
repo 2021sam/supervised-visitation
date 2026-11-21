@@ -5,8 +5,8 @@ import tempfile
 from pathlib import Path
 
 
-ENGINE_ROOT = Path.home() / "apps/data-acquisition-engine"
-TIKA_PYTHON = ENGINE_ROOT / ".venv/bin/python"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+TIKA_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 SUPPORTED_EXTENSIONS = {".doc", ".docx"}
 
@@ -34,7 +34,7 @@ def extract_text(content: bytes, extension: str) -> str:
 
         result = subprocess.run(
             [str(TIKA_PYTHON), "-c", code, str(path)],
-            cwd=ENGINE_ROOT,
+            cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
             check=False,

@@ -1,15 +1,8 @@
 """Secure, reusable HTTP document downloader."""
 
-import sys
-from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 import httpx
-
-ENGINE_ROOT = Path.home() / "apps/data-acquisition-engine"
-
-if str(ENGINE_ROOT) not in sys.path:
-    sys.path.insert(0, str(ENGINE_ROOT))
 
 from acquisition.core import safe_public_url
 from acquisition.secure_transport import SecureCourtTransport

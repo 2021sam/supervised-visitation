@@ -12,8 +12,12 @@ def normalize_provider(candidate, source=None):
     record = new_provider()
     source = source or {}
 
-    record["name"] = candidate.get("name")
-    record["business_name"] = candidate.get("name")
+    record["name"] = (
+        candidate.get("contact_person")
+        or candidate.get("provider_name")
+        or candidate.get("name")
+    )
+    record["business_name"] = candidate.get("business_name")
 
     record["contact"]["phones"] = list(dict.fromkeys(
         candidate.get("phones", [])

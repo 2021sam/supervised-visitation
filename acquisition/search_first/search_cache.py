@@ -124,6 +124,16 @@ class SearchCache:
         self._migrate()
         self.con.executescript(SCHEMA)
 
+        columns = {
+            row[1]
+            for row in self.con.execute("PRAGMA table_info(providers)")
+        }
+        if "business_name" not in columns:
+            self.con.execute(
+                "ALTER TABLE providers ADD COLUMN business_name TEXT NOT NULL DEFAULT ''"
+            )
+            self.con.commit()
+
     def _migrate(self):
         """Convert the original cache-key relationships to integer IDs."""
         exists = self.con.execute(

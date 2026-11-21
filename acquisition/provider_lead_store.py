@@ -88,6 +88,8 @@ def _normalize(record):
 
     return {
         "provider_name": name,
+        "business_name": _value(record, "business_name")
+                         or _value(fields, "business_name"),
         "phone": phone,
         "email": email,
         "website": _value(record, "website", "url")
@@ -219,7 +221,7 @@ def persist_county_leads(*, root, state, county, acquired, status_path=None):
                     existing = con.execute(
                         """
                         SELECT id, phone, email, website, city,
-                               verification_status
+                               verification_status, business_name
                         FROM providers
                         WHERE document_id = ?
                           AND provider_name = ? COLLATE NOCASE
@@ -228,13 +230,14 @@ def persist_county_leads(*, root, state, county, acquired, status_path=None):
                     ).fetchone()
 
                     if existing:
-                        provider_id, phone, email, website, city, status = existing
+                        provider_id, phone, email, website, city, status, business_name = existing
 
                         con.execute(
                             """
                             UPDATE providers
                             SET phone = ?, email = ?, website = ?,
-                                city = ?, verification_status = ?
+                                city = ?, verification_status = ?,
+                                business_name = ?
                             WHERE id = ?
                             """,
                             (
@@ -243,6 +246,7 @@ def persist_county_leads(*, root, state, county, acquired, status_path=None):
                                 record["website"] or website,
                                 record["city"] or city,
                                 record["verification_status"] or status,
+                                record["business_name"] or business_name,
                                 provider_id,
                             ),
                         )
@@ -251,15 +255,16 @@ def persist_county_leads(*, root, state, county, acquired, status_path=None):
                             """
                             INSERT INTO providers (
                                 county_id, document_id, provider_name,
-                                phone, email, website, city,
+                                business_name, phone, email, website, city,
                                 verification_status
                             )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 county_id,
                                 document_id,
                                 record["provider_name"],
+                                record["business_name"],
                                 record["phone"],
                                 record["email"],
                                 record["website"],
