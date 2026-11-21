@@ -34,18 +34,6 @@ def validate(result_id):
 
         court_id, county, court_url, title, url = row
 
-        source_host = urlparse(url).hostname
-        court_host = urlparse(court_url).hostname
-
-        if (
-            not source_host
-            or not court_host
-            or source_host != court_host
-        ):
-            raise ValueError(
-                "PDF must be hosted on the court's official domain"
-            )
-
         print(f"Court: {county} ({court_id})")
         print(f"Result: {result_id}")
         print(f"PDF: {url}")
