@@ -138,6 +138,20 @@ def validate(result_id):
                 WHERE result_id = ?
             """, (result_id,))
 
+            # A validated official directory with at least one
+            # persisted provider qualifies the county as FOUND.
+            con.execute("""
+                UPDATE courts
+                SET classification = 'FOUND'
+                WHERE court_id = ?
+                  AND EXISTS (
+                      SELECT 1
+                      FROM supervisors
+                      WHERE court_id = ?
+                        AND result_id = ?
+                  )
+            """, (court_id, court_id, result_id))
+
         print(f"Before: {before}")
         print(f"Added: {after - before}")
         print(f"After: {after}")

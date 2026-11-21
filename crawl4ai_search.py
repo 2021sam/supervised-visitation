@@ -213,6 +213,7 @@ async def async_search(
     dynamic=False,
     ranking="keyword",
     extract_documents=False,
+    link_filter=None,
 ):
     """
     Crawl from a starting URL and return structured results.
@@ -251,6 +252,30 @@ async def async_search(
         raise ValueError("Starting URL must use HTTP or HTTPS")
 
     ranker = RelevanceRanker(query, mode=ranking)
+
+    import re
+
+    def normalize_link_text(value):
+        return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+    phrases = [
+        normalize_link_text(term)
+        for term in (link_filter or [])
+        if normalize_link_text(term)
+    ]
+
+    def matches_link(link):
+        if not phrases:
+            return True
+
+        text = normalize_link_text(link["text"])
+        url_text = normalize_link_text(link["url"])
+
+        return any(
+            phrase in text or phrase in url_text
+            for phrase in phrases
+        )
+
 
     # Learn redirect behavior from actual server responses.
     https_hosts = set()
@@ -493,6 +518,9 @@ async def async_search(
                     ):
                         continue
 
+                    if not matches_link(link):
+                        continue
+
                     score = ranker.score(
                         link["text"] + " " + original_target
                     )
@@ -709,6 +737,13 @@ def main():
     )
 
     parser.add_argument(
+        "--link-filter",
+        nargs="+",
+        default=None,
+        help="Only follow links matching at least one phrase",
+    )
+
+    parser.add_argument(
         "--extract-documents",
         action="store_true",
         help="Download and extract discovered documents",
@@ -731,6 +766,7 @@ def main():
         dynamic=args.dynamic,
         ranking=args.ranking,
         extract_documents=args.extract_documents,
+        link_filter=args.link_filter,
     )
 
     if args.json:
