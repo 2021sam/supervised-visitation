@@ -88,14 +88,28 @@ def extract_column_table_providers(markdown):
             and "locations served" in normalized
         )
 
+        embedded_contact_directory = (
+            len(cells) >= 6
+            and normalized[0] == "name"
+            and "intake fee" in normalized
+            and "hourly fees" in normalized
+            and (
+                "counties served" in normalized
+                or "geographical location served" in normalized
+            )
+        )
+
         if (
-            contact_directory
+            embedded_contact_directory
+            or contact_directory
             or rate_directory
             or provider_information_directory
             or authorized_provider_directory
         ):
             active_contact_directory = (
-                contact_directory or provider_information_directory
+                contact_directory
+                or provider_information_directory
+                or embedded_contact_directory
             )
             columns = []
 

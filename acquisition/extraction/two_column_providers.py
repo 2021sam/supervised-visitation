@@ -3,6 +3,7 @@
 import re
 
 from acquisition.extraction.markdown_providers import parse_row
+from acquisition.extraction.provider_fields import extract_website
 
 
 PHONE = re.compile(
@@ -90,6 +91,7 @@ def extract_two_column_providers(markdown):
                 "name": name,
                 "phone": phones[0] if phones else "",
                 "email": emails[0] if emails else "",
+                "website": extract_website(cell) or "",
                 "raw_text": cell,
             })
 

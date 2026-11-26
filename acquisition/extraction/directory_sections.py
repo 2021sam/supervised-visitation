@@ -40,3 +40,37 @@ def has_provider_directory_heading(markdown: str) -> bool:
                 return True
 
     return False
+
+
+def isolate_provider_tables(markdown: str) -> str:
+    """Return tables explicitly labeled as provider directories."""
+    tables = []
+    current = []
+
+    def flush():
+        if not current:
+            return
+
+        cells = [
+            cell.strip()
+            for cell in current[0].strip("|").split("|")
+        ]
+
+        if cells and all(
+            PROVIDER_HEADING.fullmatch(cell)
+            for cell in cells
+        ):
+            tables.append("\n".join(current))
+
+    for line in markdown.splitlines():
+        stripped = line.strip()
+
+        if stripped.startswith("|"):
+            current.append(stripped)
+        else:
+            flush()
+            current.clear()
+
+    flush()
+
+    return "\n\n".join(tables)

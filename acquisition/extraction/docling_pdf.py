@@ -2,6 +2,7 @@ from .two_column_providers import extract_two_column_providers
 """Extract PDF provider candidates exclusively through Docling."""
 
 from .docling_adapter import pdf_to_markdown
+from .directory_sections import isolate_provider_tables
 from .markdown_providers import extract_providers
 from .column_table_providers import extract_column_table_providers
 from .label_value_providers import extract_label_value_providers
@@ -21,6 +22,7 @@ def extract_docling_pdf(content: bytes, *, source_url=None):
     """Convert once with Docling, then extract provider candidates."""
 
     markdown = pdf_to_markdown(content)
+    markdown = isolate_provider_tables(markdown) or markdown
 
     records = []
     seen = set()
