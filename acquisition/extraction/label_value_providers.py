@@ -29,9 +29,10 @@ def clean_value(value):
 
 
 def extract_label_value_providers(markdown):
-    """Parse repeated Name of Provider blocks into candidates."""
+    """Parse inline and multiline label-value provider blocks."""
     providers = []
     current = None
+    active_key = None
 
     for line in markdown.splitlines():
         line = line.strip()
@@ -45,30 +46,49 @@ def extract_label_value_providers(markdown):
             re.I,
         )
 
-        if not match:
-            continue
-
-        label = re.sub(r"\s+", " ", match.group(1)).strip().lower()
-        value = clean_value(match.group(2))
-
+        label = (
+            match.group(1) if match else line
+        )
+        label = re.sub(r"\s+", " ", label).strip().lower()
         key = FIELD_MAP.get(label)
 
-        if key == "name":
-            if current and current.get("name"):
-                providers.append(current)
+        if key:
+            value = clean_value(
+                match.group(2) if match else ""
+            )
 
-            current = {"name": value, "raw_lines": [line]}
+            if key == "name":
+                if current and current.get("name"):
+                    providers.append(current)
+
+                current = {"name": value, "raw_lines": [line]}
+            elif current is not None:
+                current["raw_lines"].append(line)
+                current[key] = value
+
+                if key == "rates":
+                    current["hourly_rate_labeled"] = True
+
+            active_key = key
             continue
 
         if current is None:
             continue
 
+        if line.startswith("#"):
+            active_key = None
+            continue
+
         current["raw_lines"].append(line)
 
-        if key and value:
-            current[key] = value
-            if label == "hourly rate":
-                current["hourly_rate_labeled"] = True
+        if line == ":":
+            continue
+
+        if active_key:
+            previous = current.get(active_key, "")
+            current[active_key] = clean_value(
+                f"{previous} {line}"
+            )
 
     if current and current.get("name"):
         providers.append(current)

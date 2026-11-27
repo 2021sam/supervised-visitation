@@ -62,3 +62,31 @@ def clean_embedded_contact_name(name):
     cleaned = re.sub(r"\s+\.", ".", cleaned)
 
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+PHONE_PATTERN = re.compile(
+    r"(?<!\d)(?:\+?1[\s.-]*)?"
+    r"(?:\(\s*(\d{3})\s*\)|(\d{3}))"
+    r"[\s.-]*(\d{3})[\s.-]*(\d{4})(?!\d)"
+)
+
+
+def normalize_phone_numbers(*values):
+    """Extract, normalize and deduplicate published US phone numbers."""
+    numbers = []
+
+    for value in values:
+        if not value:
+            continue
+
+        for match in PHONE_PATTERN.finditer(str(value)):
+            area = match.group(1) or match.group(2)
+            prefix = match.group(3)
+            suffix = match.group(4)
+
+            number = f"({area}) {prefix}-{suffix}"
+
+            if number not in numbers:
+                numbers.append(number)
+
+    return "; ".join(numbers)

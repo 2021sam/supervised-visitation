@@ -3,6 +3,9 @@
 from acquisition.extraction.contact_cleanup import (
     clean_embedded_contact_name,
 )
+from acquisition.extraction.provider_fields import (
+    normalize_website,
+)
 from acquisition.extraction.supervisor_zip import (
     extract_zip_code,
 )
@@ -24,6 +27,9 @@ def enrich_supervisor(candidate):
         **candidate,
         "name": clean_embedded_contact_name(
             candidate.get("name") or ""
+        ),
+        "website": normalize_website(
+            candidate.get("website")
         ),
         "zip_code": extract_zip_code(candidate),
         "service_area": normalize_service_area(

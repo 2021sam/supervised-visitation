@@ -21,61 +21,22 @@ from readers.pdf_reader import (
 from acquisition.extraction.directory_sections import (
     has_provider_directory_heading,
 )
+from acquisition.extraction.contact_cleanup import (
+    normalize_phone_numbers,
+)
 from acquisition.extraction.supervisor_details import (
     enrich_supervisor,
 )
 from acquisition.database.supervisor_schema import (
     ensure_supervisor_detail_columns,
 )
+from acquisition.database.validated_document import (
+    save_validated_document,
+)
 from acquisition.database.supervisor_writer import (
     save_supervisor,
 )
 
-
-
-def identify_directory_county(content, connection):
-    """Identify the issuing California Superior Court using Docling."""
-
-    text = extract_pdf_text(content)
-
-    patterns = (
-        r"Superior Court of California[,\s-]+County of\s+",
-        r"Superior Court of the State of California[,\s-]+"
-        r"(?:in and for the )?County of\s+",
-        r"California Superior Court[,\s-]+County of\s+",
-    )
-
-    counties = connection.execute(
-        "SELECT court_id, county FROM courts"
-    ).fetchall()
-
-    matches = set()
-
-    for court_id, county in counties:
-        escaped = re.escape(county)
-
-        for pattern in patterns:
-            if re.search(
-                pattern + escaped + r"\b",
-                text,
-                re.IGNORECASE,
-            ):
-                matches.add((court_id, county))
-
-        if re.search(
-            escaped + r"\s+County Superior Court\b",
-            text,
-            re.IGNORECASE,
-        ):
-            matches.add((court_id, county))
-
-    if len(matches) != 1:
-        raise ValueError(
-            "Cannot uniquely identify issuing county: "
-            + ", ".join(sorted(name for _, name in matches))
-        )
-
-    return next(iter(matches))
 
 
 def validate(result_id):
@@ -111,18 +72,6 @@ def validate(result_id):
 
         if not content.startswith(b"%PDF-"):
             raise ValueError("Downloaded content is not a PDF")
-
-        actual_court_id, actual_county = identify_directory_county(
-            content, con
-        )
-
-        if actual_court_id != court_id:
-            print(
-                f"Cross-county directory: {county} -> {actual_county}"
-            )
-
-        court_id = actual_court_id
-        county = actual_county
 
         markdown = extract_pdf_text(content)
 
@@ -179,9 +128,9 @@ def validate(result_id):
                 phones = record.get("phones") or []
                 emails = record.get("emails") or []
 
-                phone = str(
-                    record.get("phone") or (phones[0] if phones else "")
-                ).strip()
+                phone = normalize_phone_numbers(
+                    record.get("phone"), *phones
+                )
                 email = str(
                     record.get("email") or (emails[0] if emails else "")
                 ).strip()
@@ -210,13 +159,7 @@ def validate(result_id):
                 ):
                     continue
 
-                valid_phone = (
-                    len(re.sub(r"\D", "", phone)) in (10, 11)
-                    and (
-                        len(re.sub(r"\D", "", phone)) == 10
-                        or re.sub(r"\D", "", phone).startswith("1")
-                    )
-                )
+                valid_phone = bool(phone)
 
                 valid_email = bool(re.fullmatch(
                     r"[^\s@]+@[^\s@]+\.[^\s@]+",
@@ -277,6 +220,9 @@ def validate(result_id):
                         AND result_id = ?
                   )
             """, (court_id, court_id, result_id))
+
+        path = save_validated_document(result_id, content)
+        print(f"PDF retained: {path}")
 
         print(f"Before: {before}")
         print(f"Added: {after - before}")

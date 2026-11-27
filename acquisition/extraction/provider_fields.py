@@ -201,3 +201,25 @@ def extract_website(text):
         url = "https://" + url
 
     return url
+
+
+def normalize_website(value):
+    """Normalize a published website without inventing missing URLs."""
+
+    if not value:
+        return ""
+
+    value = str(value).strip()
+
+    if value.casefold() in {
+        "", "none", "n/a", "na", "null",
+        "not available", "no website", "no",
+    }:
+        return ""
+
+    # Repair Markdown escapes and fragmented URL punctuation.
+    value = value.replace(r"\_", "_")
+    value = re.sub(r"\s*-\s*", "-", value)
+    value = re.sub(r"\s*\.\s*", ".", value)
+
+    return extract_website(value) or ""
