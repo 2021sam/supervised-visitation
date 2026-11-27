@@ -17,6 +17,7 @@ EMAIL_PATTERN = re.compile(
 )
 
 EXCLUDED_HEADINGS = (
+    "professional supervised visitation and exchange provider list",
     "for referrals",
     "revised ",
     "this list",
