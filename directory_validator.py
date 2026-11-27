@@ -21,6 +21,15 @@ from readers.pdf_reader import (
 from acquisition.extraction.directory_sections import (
     has_provider_directory_heading,
 )
+from acquisition.extraction.supervisor_details import (
+    enrich_supervisor,
+)
+from acquisition.database.supervisor_schema import (
+    ensure_supervisor_detail_columns,
+)
+from acquisition.database.supervisor_writer import (
+    save_supervisor,
+)
 
 
 
@@ -157,7 +166,15 @@ def validate(result_id):
         """, (result_id,)).fetchone()[0]
 
         with con:
-            for record in records:
+            ensure_supervisor_detail_columns(con)
+            persisted_ids = set()
+
+            for candidate in records:
+                original_name = str(
+                    candidate.get("name") or ""
+                ).strip()
+
+                record = enrich_supervisor(candidate)
                 name = str(record.get("name") or "").strip()
                 phones = record.get("phones") or []
                 emails = record.get("emails") or []
@@ -209,20 +226,27 @@ def validate(result_id):
                 if not (valid_phone or valid_email):
                     continue
 
-                con.execute("""
-                    INSERT OR IGNORE INTO supervisors
-                    (court_id, result_id, name, phone,
-                     email, website, raw_text)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
+                record["name"] = name
+                record["phone"] = phone if valid_phone else ""
+                record["email"] = email if valid_email else ""
+
+                supervisor_id = save_supervisor(
+                    con,
                     court_id,
                     result_id,
-                    name,
-                    phone if valid_phone else "",
-                    email if valid_email else "",
-                    record.get("website") or "",
-                    record.get("raw_text") or "",
-                ))
+                    record,
+                    original_name=original_name,
+                )
+
+                if supervisor_id in persisted_ids:
+                    raise ValueError(
+                        f"Duplicate supervisor identity: {name}"
+                    )
+
+                persisted_ids.add(supervisor_id)
+
+            if not persisted_ids:
+                raise ValueError("No valid supervisors persisted")
 
             after = con.execute("""
                 SELECT COUNT(*) FROM supervisors

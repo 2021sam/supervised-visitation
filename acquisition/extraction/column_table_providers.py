@@ -131,14 +131,26 @@ def extract_column_table_providers(markdown):
                     columns.append("contact")
                 elif "availability" in heading or "hours" in heading:
                     columns.append("availability")
+                elif "intake fee" in heading:
+                    columns.append("intake_fee")
                 elif "fee" in heading or "rate" in heading:
                     columns.append("rates")
+                elif (
+                    "type of service" in heading
+                    or "services covered" in heading
+                    or "services offered" in heading
+                ):
+                    columns.append("services")
+                elif "counties served" in heading:
+                    columns.append("service_counties")
                 elif (
                     "geographic" in heading
                     or "service area" in heading
                     or "locations served" in heading
                 ):
                     columns.append("service_area")
+                elif "additional information" in heading:
+                    columns.append("additional_info")
                 elif "trustline" in heading:
                     columns.append("trustline_id")
                 elif "language" in heading:

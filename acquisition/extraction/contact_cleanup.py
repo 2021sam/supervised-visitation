@@ -31,3 +31,34 @@ def clean_contact_name(name):
     cleaned = EMAIL_PATTERN.sub(" ", cleaned)
     cleaned = PHONE_EXTENSION_PATTERN.sub(" ", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def clean_embedded_contact_name(name):
+    """Remove explicitly labeled contact details from names."""
+
+    cleaned = clean_contact_name(name)
+
+    cleaned = re.split(
+        r"\b(?:By Appointment Only|Office|Address|Phone|Email|Website)\s*:",
+        cleaned,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+
+    cleaned = re.sub(
+        r"\(\s*Helpline[^)]*\)",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    cleaned = re.sub(
+        r"(?:https?://|www\.)[^\s]+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    cleaned = re.sub(r"\s+\.", ".", cleaned)
+
+    return re.sub(r"\s+", " ", cleaned).strip()
