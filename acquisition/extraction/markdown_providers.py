@@ -8,6 +8,10 @@ FIELD_NAMES = {
     "address": "location",
     "email": "email",
     "phone": "phone",
+    "phone/fax": "phone",
+    "phone/ fax": "phone",
+    "phone / fax": "phone",
+    "phone /fax": "phone",
     "telephone": "phone",
     "website": "website",
     "service area": "service_area",
@@ -66,7 +70,10 @@ def extract_providers(markdown):
 
         if label in FIELD_NAMES:
             if current:
+                current["raw_text"] += "\n" + line.strip()
                 key = FIELD_NAMES[label]
+                if key == "phone" and "fax" in label:
+                    value = value.split("/", 1)[0].strip()
                 if value:
                     current[key] = value
             continue
@@ -79,7 +86,10 @@ def extract_providers(markdown):
             and cells[0].lower() == cells[1].lower()
         ):
             save_current()
-            current = {"name": cells[0]}
+            current = {
+                "name": cells[0],
+                "raw_text": line.strip(),
+            }
             continue
 
     save_current()
